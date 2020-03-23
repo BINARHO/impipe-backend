@@ -9,3 +9,7 @@ Server for the `impipe` project using ZeroRPC and Python3
 ### Architecture
 
 ![arch](./arch.png)
+
+### Lifecycle
+
+![lifecycle](./lifecycle.png)
