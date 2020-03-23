@@ -2,6 +2,8 @@
 
 Server for the `impipe` project using ZeroRPC and Python3
 
+![screenshot](./screenshot.png)
+
 ## Implementation
 
 ### Architecture
