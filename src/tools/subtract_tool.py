@@ -2,8 +2,8 @@ from tools.tool import Tool
 
 
 class SubtractTool(Tool):
-    def __init__(self):
-        super(SubtractTool, self).__init__()
+    def __init__(self, key: str):
+        super(SubtractTool, self).__init__(key)
         self.inputs = {
             "a": None,
             "b": None,

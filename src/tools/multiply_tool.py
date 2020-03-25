@@ -2,8 +2,8 @@ from tools.tool import Tool
 
 
 class MultiplyTool(Tool):
-    def __init__(self):
-        super(MultiplyTool, self).__init__()
+    def __init__(self, key: str):
+        super(MultiplyTool, self).__init__(key)
         self.inputs = {
             "a": None,
             "b": None,

@@ -1,5 +1,7 @@
 import logging
 
+from typing import Dict
+
 from tools.tool import Tool
 from tools.compute_node import ComputeNode
 
@@ -7,6 +9,8 @@ from tools.add_tool import AddTool
 from tools.subtract_tool import SubtractTool
 from tools.multiply_tool import MultiplyTool
 from tools.constant_tool import ConstantTool
+
+_JSON_TYPE = Dict[str, str]
 
 
 class Event(object):
@@ -30,22 +34,19 @@ class Graph(object):
 
     def __init__(self):
         super(Graph, self).__init__()
-        self.nodes = {}
-        self.links = {}
-        self.compute_nodes = {}
+        self.nodes: Dict[str, Tool] = {}
+        self.links: Dict[str, _JSON_TYPE] = {}
         self.logger = logging.getLogger(__name__)
         self.logger.setLevel(logging.DEBUG)
 
-    def _get_node(self, node_key):
-        if node_key not in self.nodes and node_key not in self.compute_nodes:
+    def _get_node(self, node_key: str) -> Tool:
+        if node_key not in self.nodes:
             msg = f"Couldn't find node with unknown key {node_key}"
             self.logger.error(msg)
             raise RuntimeError(msg)
-        if node_key in self.nodes:
-            return self.nodes[node_key]
-        return self.compute_nodes[node_key]
+        return self.nodes[node_key]
 
-    def _add_node(self, node):
+    def _add_node(self, node: _JSON_TYPE) -> None:
         node_type = node["type"]
         node_key = node["key"]
 
@@ -61,19 +62,17 @@ class Graph(object):
 
         self.logger.debug(f"Adding new node of type {node_type} with key {node_key}")
 
-        new_node = self.AVAILABLE_TOOLS[node_type]()
+        new_node = self.AVAILABLE_TOOLS[node_type](node_key)
         if self.AVAILABLE_TOOLS[node_type] is ComputeNode:
             self.logger.debug(f"Setting new compute node with ket {node_key}")
-            self.compute_nodes[node_key] = new_node
-        else:
-            self.nodes[node_key] = new_node
+        self.nodes[node_key] = new_node
 
-    def _update_node(self, key, props):
+    def _update_node(self, key: str, props: _JSON_TYPE) -> None:
         node = self._get_node(key)
         self.logger.debug(f"Updating node props with key {key}")
-        node.update(inputs={}, props=props)
+        node.update_props(props)
 
-    def _add_link(self, link):
+    def _add_link(self, link: _JSON_TYPE) -> None:
         link_key = link["key"]
 
         if link_key in self.links:
@@ -81,6 +80,8 @@ class Graph(object):
 
         from_key, from_port, to_key, to_port = link["from"], link["fromPort"], link["to"], link["toPort"]
         from_node, to_node = self._get_node(from_key), self._get_node(to_key)
+        self.logger.info(f"from: {from_node.key}/{from_key}")
+        self.logger.info(f"to: {to_node.key}/{to_key}")
 
         if from_port not in from_node.outputs:
             msg = f"Couldn't link from unknown port {from_port} on node with key {from_key}"
@@ -94,18 +95,15 @@ class Graph(object):
 
         self.logger.debug(f"Adding link {link_key} = {from_key}:{from_port}->{to_key}:{to_port}")
 
-        new_input = {
-            to_port: {
-                "key": from_key,
-                "port": from_port,
-                "value": None,
-            }
-        }
+        new_output = {from_port: (to_node, to_port)}
+        from_node.add_outputs(new_output)
 
-        to_node.update(inputs=new_input, props={})
+        new_input = {to_port: (from_node, from_port)}
+        to_node.update_inputs(new_input)
+
         self.links[link_key] = link
 
-    def _update_link(self, link):
+    def _update_link(self, link: _JSON_TYPE) -> None:
         link_key = link["key"]
 
         if link_key not in self.links:
@@ -115,7 +113,7 @@ class Graph(object):
         self._remove_link(link_key)
         self._add_link(link)
 
-    def _remove_link(self, link_key):
+    def _remove_link(self, link_key: str) -> None:
         if link_key not in self.links:
             raise RuntimeError()
 
@@ -135,24 +133,19 @@ class Graph(object):
 
         self.logger.debug(f"Removing link {link_key} = {from_key}:{from_port}->{to_key}:{to_port}")
 
-        new_input = {
-            to_port: {
-                "key": None,
-                "port": None,
-                "value": None,
-            }
-        }
+        removed_node = {from_port: (to_key, to_port)}
+        from_node.remove_outputs(removed_node)
 
-        to_node.update(inputs=new_input, props={})
+        to_node.remove_inputs([to_port])
+
         del self.links[link_key]
 
     def _remove_node(self, key):
+        # assumption: all link connected to the remove node were already removed
+
         _ = self._get_node(key)
 
-        if key in self.nodes:
-            del self.nodes[key]
-        else:
-            del self.compute_nodes[key]
+        del self.nodes[key]
 
     def update(self, events):
         self.logger.debug(f"Got update request: {events}")
@@ -204,20 +197,21 @@ class Graph(object):
         return "updated successfully"
 
     def _compute_node(self, key, node: Tool):
-        self.logger.debug(f"Node inputs: {node.inputs}")
         for name in node.inputs:
-            key = node.inputs[name]["key"]
-            port = node.inputs[name]["port"]
+            key = node.inputs[name].connected_node.key
+            port = node.inputs[name].connected_port
             if (key is None) or (port is None):
                 raise RuntimeError(f"Incomplete input data for node with key {key}")
             self._compute_node(key, self.nodes[key])
-            node.inputs[name]["value"] = self.nodes[key].outputs[port]
+            node.inputs[name].update_value(self.nodes[key].outputs[port].value)
         node.compute()
 
     def compute(self, event):
         compute_node_key = event["selectedData"]
 
         compute_node = self._get_node(compute_node_key)
+        if not isinstance(compute_node, ComputeNode):
+            raise IOError(f'node with key {compute_node_key} is not a compute node')
 
         self.logger.debug(f"Computing compute-node with key {compute_node_key}")
         self._compute_node(compute_node_key, compute_node)
@@ -226,8 +220,4 @@ class Graph(object):
         return compute_node.value
 
     def __repr__(self):
-        node_list = []
-        node_list.extend(self.nodes)
-        if self.compute_nodes:
-            node_list.append(self.compute_nodes)
-        return repr(node_list)
+        return repr(self.nodes.keys())
